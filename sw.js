@@ -2,7 +2,7 @@
 // Serves the game from cache so it runs offline, and refreshes the cache in the
 // background so a new deploy shows up on the following launch.
 
-const CACHE = 'sushi-slash-v2';
+const CACHE = 'sushi-slash-v3';
 const FILES = ['./', './index.html'];
 
 self.addEventListener('install', event => {

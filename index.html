@@ -339,6 +339,10 @@
   const BASE_POINTS = 10;
   const POINT_STEP = 5;    // each slice gains this much...
   const POINT_TIER = 500;  // ...for every this many points on the board
+  const SPIKE_SCORE = 50;  // the warm-up ends here and difficulty jumps
+  const SPIKE_START = 0.3; // difficulty the moment the spike hits
+  const SPIKE_SECONDS = 45;   // time-based climb from there to full difficulty
+  const SPIKE_POINTS = 1200;  // score-based climb, added on top of the time-based one
   const COMBO_MIN = 3;     // fewer cuts than this in a swipe earn no bonus
   const COMBO_GAP = 0.4;   // seconds between cuts that still count as one swipe
   const MATCHA_TIME = 3.5; // seconds of slow motion
@@ -710,7 +714,8 @@
     lives: MAX_LIVES,
     time: 0,               // seconds played this run
     speed: .85,
-    slow: 1,               // world time multiplier, eased toward MATCHA_SLOW
+    spikeAt: null,         // run time when the score first reached SPIKE_SCORE
+    slow: 1,             // world time multiplier, eased toward MATCHA_SLOW
     matcha: null,          // { until, cup, touched, slashes, bonus } while slow motion runs
     nextTea: 0,
     nextWave: .6,
@@ -750,8 +755,16 @@
     }
   }
 
-  /* Rising 0 to 1 over a run, driven by both time survived and score. */
-  function level() { return clamp(state.time / 180 + state.score / 8000, 0, 1); }
+  /* 0 through the warm-up, then a jump at SPIKE_SCORE and a steep climb to 1. */
+  function level() {
+    if (state.score < SPIKE_SCORE) return 0;
+    if (state.spikeAt === null) state.spikeAt = state.time;
+    return clamp(
+      SPIKE_START
+        + (1 - SPIKE_START) * (state.time - state.spikeAt) / SPIKE_SECONDS
+        + (state.score - SPIKE_SCORE) / SPIKE_POINTS,
+      0, 1);
+  }
 
   function pointValue() { return BASE_POINTS + POINT_STEP * Math.floor(state.score / POINT_TIER); }
 
@@ -789,11 +802,10 @@
       return;
     }
 
-    // Eased so the opening stays at one slow item every few seconds.
-    const i = Math.pow(level(), 1.5);
+    const i = level();
     const count = Math.min(6, 1 + Math.floor(i * 5 + Math.random() * (.3 + i * 1.3)));
     const gap = Math.random() < .35 ? 0 : .14;
-    const hazardChance = state.time < 20 ? 0 : lerp(.05, .22, i);
+    const hazardChance = i === 0 ? 0 : lerp(.05, .3, i);
     const hazardCap = Math.ceil(count / 3);
     if (clock >= state.nextTea && Math.random() < TEA_CHANCE) {
       state.nextTea = clock + TEA_COOLDOWN;
@@ -805,8 +817,8 @@
       if (spicy) hazards++;
       state.queue.push({ at: clock + n * gap, kind: spicy ? WASABI : Math.floor(rand(0, WASABI)) });
     }
-    state.speed = lerp(.85, 1.45, i);
-    state.nextWave = clock + lerp(3.2, .8, i) * rand(.9, 1.1) + count * gap;
+    state.speed = lerp(.85, 1.55, i);
+    state.nextWave = clock + lerp(3.2, .7, i) * rand(.9, 1.1) + count * gap;
   }
 
   function addScore(points) {
@@ -1286,7 +1298,7 @@
     clearTimeout(overTimer);
     sound.wake();
     clearBoard();
-    Object.assign(state, { mode: 'play', score: 0, lives: MAX_LIVES, time: 0, speed: .85, nextWave: clock + 1, nextTea: clock + 30, grace: 0 });
+    Object.assign(state, { mode: 'play', score: 0, lives: MAX_LIVES, time: 0, speed: .85, spikeAt: null, nextWave: clock + 1, nextTea: clock + 30, grace: 0 });
     ui.score.textContent = '0';
     updateLives();
     showBest();
