@@ -1,0 +1,1268 @@
+<!doctype html>
+<!--
+  Sushi Slash
+  Created by Eitan Feldman
+  https://buymeacoffee.com/eitanfeldman
+
+  The whole game lives in this file: markup, styles, art (drawn in code),
+  sound (synthesised) and the web app manifest. sw.js sits next to it only
+  because browsers refuse to run a service worker from anything but its own
+  same-origin JavaScript file.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Sushi Slash</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="description" content="Sushi Slash, an arcade slicing game by Eitan Feldman. Swipe through flying sushi and spare the wasabi.">
+<meta name="author" content="Eitan Feldman">
+<meta name="application-name" content="Sushi Slash">
+<meta name="theme-color" content="#1a2440">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Sushi Slash">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='15' fill='%231c2b26'/%3E%3Ccircle cx='16' cy='16' r='12' fill='%23fbf6ea'/%3E%3Ccircle cx='16' cy='16' r='6' fill='%23ff7a59'/%3E%3C/svg%3E">
+<style>
+  :root {
+    --indigo: #1a2440;
+    --indigo-deep: #101729;
+    --ink: #f6efe3;
+    --ink-soft: rgba(246, 239, 227, .66);
+    --salmon: #ff7a59;
+    --salmon-deep: #e85c3b;
+    --wasabi: #a4d233;
+    --serif: "Hiragino Mincho ProN", "Yu Mincho", "Noto Serif", Georgia, "Times New Roman", serif;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+  html, body {
+    position: fixed;
+    inset: 0;
+    margin: 0;
+    overflow: hidden;
+    overscroll-behavior: none;
+    background: var(--indigo);
+    color: var(--ink);
+    font-family: var(--sans);
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
+  }
+
+  #game { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+
+  button { font: inherit; color: inherit; cursor: pointer; }
+  button:focus-visible, a:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
+
+  /* Screens let swipes through to the canvas; only their controls catch clicks. */
+  .screen {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: max(20px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(20px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+    text-align: center;
+    pointer-events: none;
+    opacity: 0;
+    visibility: hidden;
+    transform: scale(1.04);
+    transition: opacity .32s ease, transform .32s ease, visibility 0s linear .32s;
+  }
+  .screen.show {
+    opacity: 1;
+    visibility: visible;
+    transform: none;
+    transition: opacity .32s ease, transform .32s ease, visibility 0s;
+  }
+  .screen.dim { background: rgba(16, 23, 41, .72); }
+  .screen button, .screen a { pointer-events: auto; }
+
+  /* The title is two stacked copies, cut along a diagonal and nudged apart. */
+  .title {
+    position: relative;
+    margin: 0;
+    font-family: var(--serif);
+    font-weight: 700;
+    font-size: clamp(44px, 14vmin, 112px);
+    line-height: 1.1;
+    letter-spacing: -.01em;
+    white-space: nowrap;
+  }
+  .title span { display: block; }
+  .title .upper { clip-path: polygon(0 0, 100% 0, 100% 28%, 0 72%); animation: part-up .34s .55s cubic-bezier(.2, .8, .3, 1) forwards; }
+  .title .lower { position: absolute; inset: 0; color: var(--salmon); clip-path: polygon(0 72%, 100% 28%, 100% 100%, 0 100%); animation: part-down .34s .55s cubic-bezier(.2, .8, .3, 1) forwards; }
+  .title .edge {
+    position: absolute;
+    left: -6%;
+    right: -6%;
+    top: 50%;
+    height: 2px;
+    background: var(--ink);
+    transform: rotate(-5deg) scaleX(0);
+    transform-origin: left center;
+    opacity: 0;
+    animation: draw-edge .5s .32s ease-out;
+  }
+  /* The halves slide along the cut, so the letters stay readable. */
+  @keyframes part-up { to { transform: translate(-.03em, .003em); } }
+  @keyframes part-down { to { transform: translate(.03em, -.003em); } }
+  @keyframes draw-edge {
+    0% { opacity: 1; transform: rotate(-5deg) scaleX(0); }
+    55% { opacity: 1; transform: rotate(-5deg) scaleX(1); }
+    100% { opacity: 0; transform: rotate(-5deg) scaleX(1); }
+  }
+
+  .byline { margin: 14px 0 0; font-size: 14px; color: var(--ink-soft); }
+  .best { margin: clamp(18px, 5vh, 36px) 0 0; font-size: 15px; color: var(--ink-soft); }
+  .best b { font-variant-numeric: tabular-nums; font-size: 22px; font-weight: 700; color: var(--ink); margin-left: 6px; }
+
+  .btn {
+    min-width: 176px;
+    min-height: 54px;
+    padding: 12px 34px;
+    border: 0;
+    border-radius: 6px;
+    background: var(--salmon);
+    color: var(--indigo-deep);
+    font-size: 19px;
+    font-weight: 700;
+    transition: background .15s, transform .1s;
+  }
+  .btn:hover { background: #ff9274; }
+  .btn:active { transform: translateY(1px); background: var(--salmon-deep); }
+  .btn.quiet { background: none; color: var(--ink); box-shadow: inset 0 0 0 1.5px rgba(246, 239, 227, .4); }
+  .btn.quiet:hover { background: rgba(246, 239, 227, .1); }
+
+  .actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 12px; margin-top: clamp(16px, 4vh, 28px); }
+  .hint { margin: 16px 0 0; font-size: 15px; color: var(--ink-soft); }
+  .hint em { font-style: normal; color: var(--wasabi); }
+
+  .foot {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: max(14px, env(safe-area-inset-bottom));
+    display: flex;
+    justify-content: center;
+    gap: 18px;
+    font-size: 12.5px;
+  }
+  .foot a, .foot button {
+    pointer-events: auto;
+    padding: 6px;
+    border: 0;
+    background: none;
+    color: var(--ink-soft);
+    font-size: inherit;
+    text-decoration: none;
+  }
+  .foot a:hover, .foot button:hover { color: var(--ink); }
+
+  h2 { margin: 0; font-family: var(--serif); font-size: clamp(36px, 10vmin, 68px); line-height: 1.1; }
+  .final { margin: 12px 0 0; font-size: clamp(52px, 15vmin, 96px); font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; color: var(--salmon); }
+  .tally { margin: 10px 0 0; min-height: 1.4em; font-size: 16px; color: var(--ink-soft); }
+  .tally.record { color: var(--wasabi); font-weight: 700; }
+
+  #hud {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    padding: max(12px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) 0 max(16px, env(safe-area-inset-left));
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity .3s;
+  }
+  #hud.show { opacity: 1; }
+  #hud.show button { pointer-events: auto; }
+  #score { font-family: var(--serif); font-weight: 700; font-size: 40px; line-height: 1; font-variant-numeric: tabular-nums; }
+  #hudBest { margin-top: 3px; font-size: 13px; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+  .hud-right { display: flex; align-items: center; gap: 6px; }
+
+  #lives { display: flex; gap: 7px; margin-right: 8px; }
+  .life {
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    background: radial-gradient(circle, var(--salmon) 0 28%, #fbf6ea 30% 68%, #1c2b26 70%);
+    box-shadow: 0 0 0 1px rgba(246, 239, 227, .28);
+    transition: transform .25s, opacity .25s, filter .25s;
+  }
+  .life.gone { opacity: .28; transform: scale(.72); filter: grayscale(1); }
+
+  .icon {
+    display: grid;
+    place-items: center;
+    width: 44px;
+    height: 44px;
+    border: 0;
+    border-radius: 6px;
+    background: none;
+    color: var(--ink);
+    opacity: .78;
+  }
+  .icon:hover { opacity: 1; }
+  .icon svg { width: 22px; height: 22px; fill: currentColor; }
+  #mute[aria-pressed="true"] .waves { display: none; }
+  #mute[aria-pressed="false"] .off { display: none; }
+
+  @media (max-height: 430px) {
+    .byline { margin-top: 6px; }
+    .best { margin-top: 8px; }
+    .actions { margin-top: 10px; }
+    .hint { display: none; }
+    .btn { min-height: 46px; padding: 8px 26px; }
+    .final { margin-top: 4px; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .title .upper, .title .lower { animation-duration: 1ms; animation-delay: 0s; }
+    .title .edge { animation: none; }
+    .screen { transition-duration: .01s; transform: none; }
+  }
+</style>
+</head>
+<body>
+<canvas id="game" aria-label="Sushi Slash playing field"></canvas>
+
+<div id="hud">
+  <div>
+    <div id="score" aria-label="Score">0</div>
+    <div id="hudBest"></div>
+  </div>
+  <div class="hud-right">
+    <div id="lives" role="img" aria-label="3 lives left">
+      <span class="life"></span><span class="life"></span><span class="life"></span>
+    </div>
+    <button class="icon" id="pause" aria-label="Pause">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>
+    </button>
+  </div>
+</div>
+
+<section class="screen show" id="home">
+  <h1 class="title" aria-label="Sushi Slash">
+    <span class="upper" aria-hidden="true">Sushi Slash</span>
+    <span class="lower" aria-hidden="true">Sushi Slash</span>
+    <span class="edge" aria-hidden="true"></span>
+  </h1>
+  <p class="byline">Created by Eitan Feldman</p>
+  <p class="best">High score<b id="homeBest">0</b></p>
+  <div class="actions"><button class="btn" id="play">Play</button></div>
+  <p class="hint">Swipe to slice. Spare the <em>wasabi</em>.</p>
+  <div class="foot">
+    <a href="https://buymeacoffee.com/eitanfeldman" target="_blank" rel="noopener">Buy me a coffee</a>
+    <button id="install" hidden>Install</button>
+    <button id="mute" aria-pressed="false" aria-label="Mute sound">Sound <span class="waves">on</span><span class="off">off</span></button>
+  </div>
+</section>
+
+<section class="screen dim" id="paused" aria-label="Paused">
+  <h2>Paused</h2>
+  <div class="actions">
+    <button class="btn" id="resume">Resume</button>
+    <button class="btn quiet" id="quit">Quit</button>
+  </div>
+</section>
+
+<section class="screen dim" id="over" aria-label="Game over">
+  <h2 id="overTitle">Too spicy!</h2>
+  <p class="final" id="finalScore">0</p>
+  <p class="tally" id="tally"></p>
+  <div class="actions">
+    <button class="btn" id="again">Play again</button>
+    <button class="btn quiet" id="toHome">Home</button>
+  </div>
+</section>
+
+<script>
+(() => {
+  'use strict';
+
+  const TAU = Math.PI * 2;
+  const $ = id => document.getElementById(id);
+  const rand = (a, b) => a + Math.random() * (b - a);
+  const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+  const lerp = (a, b, t) => a + (b - a) * t;
+  const pick = list => list[Math.floor(Math.random() * list.length)];
+  const calm = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  // localStorage can throw in private windows; the game must not care.
+  const store = {
+    get(key) { try { return localStorage.getItem(key); } catch { return null; } },
+    set(key, value) { try { localStorage.setItem(key, value); } catch {} },
+  };
+
+  const MAX_LIVES = 3;
+  const POINTS = 10;
+  const COMBO_GAP = 0.4;   // seconds between cuts that still count as one swipe
+  const SWIPE_MIN = 1;     // px; shorter pointer moves are ignored
+  const TRAIL_LIFE = 0.17;
+  const TRAIL_LAYERS = [[3.4, '#ff7a45', .16], [1.9, '#ffb38a', .36], [.7, '#ffffff', 1]];
+
+  /* ---------- Sound (synthesised, so it works offline with no assets) ---------- */
+
+  const sound = (() => {
+    let ac, noise;
+    let muted = store.get('sushi-muted') === '1';
+
+    function wake() {
+      if (ac) { if (ac.state === 'suspended') ac.resume(); return; }
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) return;
+      ac = new Ctx();
+      noise = ac.createBuffer(1, ac.sampleRate / 2, ac.sampleRate);
+      const data = noise.getChannelData(0);
+      for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+    }
+
+    function swish(from, to, length, volume) {
+      if (!ac || muted) return;
+      const t = ac.currentTime;
+      const src = ac.createBufferSource();
+      const filter = ac.createBiquadFilter();
+      const gain = ac.createGain();
+      src.buffer = noise;
+      filter.type = 'bandpass';
+      filter.Q.value = 1.4;
+      filter.frequency.setValueAtTime(from, t);
+      filter.frequency.exponentialRampToValueAtTime(to, t + length);
+      gain.gain.setValueAtTime(volume, t);
+      gain.gain.exponentialRampToValueAtTime(.001, t + length);
+      src.connect(filter).connect(gain).connect(ac.destination);
+      src.start(t);
+      src.stop(t + length);
+    }
+
+    function tone(freq, length, volume, type = 'triangle', delay = 0) {
+      if (!ac || muted) return;
+      const t = ac.currentTime + delay;
+      const osc = ac.createOscillator();
+      const gain = ac.createGain();
+      osc.type = type;
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(volume, t);
+      gain.gain.exponentialRampToValueAtTime(.001, t + length);
+      osc.connect(gain).connect(ac.destination);
+      osc.start(t);
+      osc.stop(t + length);
+    }
+
+    return {
+      wake,
+      get muted() { return muted; },
+      toggle() { muted = !muted; store.set('sushi-muted', muted ? '1' : '0'); return muted; },
+      slice() { swish(rand(1800, 2600), 700, .13, .3); tone(rand(150, 190), .07, .12, 'sine'); },
+      combo(n) { [523, 659, 784, 1047, 1319].slice(0, clamp(n, 2, 5)).forEach((f, i) => tone(f, .16, .1, 'triangle', i * .055)); },
+      wasabi() { swish(5000, 300, .5, .4); tone(90, .4, .4, 'sawtooth'); },
+      miss() { tone(196, .2, .1, 'sine'); },
+      over() { [392, 311, 233].forEach((f, i) => tone(f, .34, .13, 'triangle', i * .15)); },
+    };
+  })();
+
+  /* ---------- Art: every item is drawn on a 200-unit box centred on 0,0 ---------- */
+
+  function rice(c, count, x, y, w, h) {
+    for (let i = 0; i < count; i++) {
+      c.fillStyle = pick(['#eadfc8', '#fffdf6', '#f3ebd9']);
+      c.beginPath();
+      c.ellipse(x + rand(0, w), y + rand(0, h), rand(6, 10), rand(3, 4.5), rand(0, TAU), 0, TAU);
+      c.fill();
+    }
+  }
+
+  function drawMaki(c) {
+    c.fillStyle = '#1c2b26';
+    c.beginPath(); c.arc(0, 0, 97, 0, TAU); c.fill();
+    c.strokeStyle = '#4c6a5c';
+    c.lineWidth = 4;
+    c.beginPath(); c.arc(0, 0, 95, 0, TAU); c.stroke();
+    c.save();
+    c.beginPath(); c.arc(0, 0, 82, 0, TAU); c.fillStyle = '#fbf6ea'; c.fill(); c.clip();
+    rice(c, 80, -85, -85, 170, 170);
+    c.restore();
+    c.fillStyle = '#ff7a59';
+    c.beginPath(); c.moveTo(-8, -44); c.quadraticCurveTo(38, -46, 40, -4); c.quadraticCurveTo(14, 8, -8, -2); c.closePath(); c.fill();
+    c.strokeStyle = '#ffc4ad'; c.lineWidth = 4;
+    c.beginPath(); c.moveTo(4, -32); c.lineTo(28, -8); c.stroke();
+    c.fillStyle = '#7fbf4a';
+    c.beginPath(); c.moveTo(-44, -30); c.quadraticCurveTo(-14, -30, -14, 4); c.quadraticCurveTo(-30, 26, -48, 12); c.quadraticCurveTo(-56, -10, -44, -30); c.fill();
+    c.fillStyle = '#f4c542';
+    c.beginPath(); c.moveTo(-26, 16); c.quadraticCurveTo(2, 4, 36, 10); c.quadraticCurveTo(30, 44, 0, 44); c.quadraticCurveTo(-22, 40, -26, 16); c.fill();
+  }
+
+  function drawNigiri(c) {
+    c.fillStyle = '#fbf6ea';
+    c.beginPath(); c.roundRect(-84, -12, 168, 76, 32); c.fill();
+    c.strokeStyle = 'rgba(120, 95, 60, .28)'; c.lineWidth = 3; c.stroke();
+    c.save(); c.clip(); rice(c, 44, -84, -4, 168, 68); c.restore();
+    const slab = new Path2D('M-100 12 C-92 -32 -52 -60 2 -60 C56 -60 94 -34 100 8 C70 26 34 24 0 28 C-34 32 -70 32 -100 12 Z');
+    const flesh = c.createLinearGradient(0, -60, 0, 30);
+    flesh.addColorStop(0, '#ff9a72');
+    flesh.addColorStop(1, '#f2613c');
+    c.fillStyle = flesh;
+    c.fill(slab);
+    c.save();
+    c.clip(slab);
+    c.strokeStyle = 'rgba(255, 233, 215, .85)';
+    c.lineWidth = 7;
+    for (let x = -120; x < 120; x += 36) {
+      c.beginPath(); c.moveTo(x, -66); c.quadraticCurveTo(x + 34, -18, x + 16, 36); c.stroke();
+    }
+    c.restore();
+  }
+
+  function drawAvocado(c) {
+    const shape = 'M0 -98 C30 -98 42 -66 52 -34 C60 -10 84 8 84 42 C84 78 46 98 0 98 C-46 98 -84 78 -84 42 C-84 8 -60 -10 -52 -34 C-42 -66 -30 -98 0 -98 Z';
+    c.fillStyle = '#2d4522';
+    c.fill(new Path2D(shape));
+    c.save();
+    c.scale(.9, .92);
+    const flesh = c.createRadialGradient(0, 36, 20, 0, 30, 120);
+    flesh.addColorStop(0, '#f6efa6');
+    flesh.addColorStop(.62, '#d3e07a');
+    flesh.addColorStop(1, '#84b23c');
+    c.fillStyle = flesh;
+    c.fill(new Path2D(shape));
+    c.restore();
+    const pit = c.createRadialGradient(-10, 22, 4, 0, 34, 40);
+    pit.addColorStop(0, '#b9794a');
+    pit.addColorStop(1, '#6b3d20');
+    c.fillStyle = pit;
+    c.beginPath(); c.arc(0, 36, 37, 0, TAU); c.fill();
+  }
+
+  function onigiriPath(c) {
+    c.beginPath();
+    c.moveTo(0, -94);
+    c.arcTo(112, 84, -112, 84, 36);
+    c.arcTo(-112, 84, 0, -94, 36);
+    c.arcTo(0, -94, 112, 84, 36);
+    c.closePath();
+  }
+
+  function drawOnigiri(c) {
+    onigiriPath(c);
+    const body = c.createLinearGradient(0, -94, 0, 84);
+    body.addColorStop(0, '#ffffff');
+    body.addColorStop(1, '#e7dcc3');
+    c.fillStyle = body;
+    c.fill();
+    c.strokeStyle = 'rgba(120, 95, 60, .3)'; c.lineWidth = 3; c.stroke();
+    c.save();
+    c.clip();
+    rice(c, 56, -100, -94, 200, 178);
+    c.fillStyle = '#1c2b26';
+    c.fillRect(-40, 14, 80, 74);
+    c.fillStyle = '#34493f';
+    c.fillRect(-40, 14, 80, 5);
+    c.restore();
+    c.fillStyle = '#2a2017';
+    for (const [x, y] of [[-12, -38], [14, -26], [-4, -8], [-30, -2], [30, 0]]) {
+      c.beginPath(); c.ellipse(x, y, 5, 2.6, x, 0, TAU); c.fill();
+    }
+  }
+
+  function drawTemaki(c) {
+    c.fillStyle = '#7fbf4a';
+    c.beginPath(); c.moveTo(-40, -30); c.lineTo(-58, -92); c.lineTo(-30, -96); c.lineTo(-12, -34); c.fill();
+    c.fillStyle = '#ff7a59';
+    c.beginPath(); c.moveTo(-14, -30); c.lineTo(-8, -98); c.lineTo(26, -96); c.lineTo(28, -30); c.fill();
+    c.strokeStyle = '#ffd9c8'; c.lineWidth = 5;
+    c.beginPath(); c.moveTo(4, -86); c.lineTo(10, -40); c.stroke();
+    c.fillStyle = '#f4c542';
+    c.beginPath(); c.moveTo(34, -30); c.lineTo(52, -84); c.lineTo(74, -74); c.lineTo(56, -28); c.fill();
+    c.fillStyle = '#fbf6ea';
+    c.beginPath(); c.ellipse(0, -30, 78, 30, 0, 0, TAU); c.fill();
+    rice(c, 30, -64, -50, 128, 36);
+    c.fillStyle = '#1c2b26';
+    c.beginPath(); c.moveTo(-84, -30); c.quadraticCurveTo(0, 6, 84, -30); c.lineTo(8, 100); c.quadraticCurveTo(0, 104, -8, 100); c.closePath(); c.fill();
+    c.strokeStyle = '#4c6a5c'; c.lineWidth = 4;
+    c.beginPath(); c.moveTo(-84, -30); c.quadraticCurveTo(0, 6, 84, -30); c.stroke();
+    c.beginPath(); c.moveTo(30, -18); c.lineTo(-6, 92); c.stroke();
+  }
+
+  function drawWasabi(c) {
+    c.beginPath();
+    for (let i = 0; i <= 72; i++) {
+      const a = i / 72 * TAU;
+      const r = 84 + Math.sin(a * 5) * 4 + Math.sin(a * 9 + 1) * 2.5;
+      c.lineTo(Math.cos(a) * r, Math.sin(a) * r);
+    }
+    c.closePath();
+    const body = c.createRadialGradient(-26, -32, 8, 0, 0, 92);
+    body.addColorStop(0, '#dcf57a');
+    body.addColorStop(.55, '#97cc2e');
+    body.addColorStop(1, '#4c7f16');
+    c.fillStyle = body;
+    c.fill();
+    c.strokeStyle = '#d3241f'; c.lineWidth = 6; c.stroke();
+    c.lineCap = 'round';
+    c.strokeStyle = '#1f3609'; c.lineWidth = 10;
+    c.beginPath(); c.moveTo(-50, -34); c.lineTo(-14, -14); c.stroke();
+    c.beginPath(); c.moveTo(50, -34); c.lineTo(14, -14); c.stroke();
+    c.fillStyle = '#1f3609';
+    c.beginPath(); c.arc(-27, -4, 9, 0, TAU); c.arc(27, -4, 9, 0, TAU); c.fill();
+    c.lineWidth = 8; c.lineJoin = 'round';
+    c.beginPath(); c.moveTo(-36, 40); c.lineTo(-18, 26); c.lineTo(0, 40); c.lineTo(18, 26); c.lineTo(36, 40); c.stroke();
+  }
+
+  const KINDS = [
+    { draw: drawMaki, juice: '#ff8a65', inner: '#fff4e2' },
+    { draw: drawNigiri, juice: '#ff6f47', inner: '#ffb08f' },
+    { draw: drawAvocado, juice: '#b7d94c', inner: '#efe99a' },
+    { draw: drawOnigiri, juice: '#fff5df', inner: '#fffaf0' },
+    { draw: drawTemaki, juice: '#7fbf4a', inner: '#fff4e2' },
+  ];
+  const WASABI = KINDS.length;
+  KINDS[WASABI] = { draw: drawWasabi, juice: '#a4d233', inner: '#dcf57a' };
+
+  /* ---------- Canvas, sprites, background ---------- */
+
+  const canvas = $('game');
+  const ctx = canvas.getContext('2d', { alpha: false });
+  let W = 0, H = 0, DPR = 1, R = 40, G = 800;
+  let spriteSize = 0, spritePx = 0, sprites = [];
+  let aura, glow, bg;
+  let halfPool = [];
+
+  function makeCanvas(w, h = w) {
+    const c = document.createElement('canvas');
+    c.width = Math.ceil(w);
+    c.height = Math.ceil(h);
+    return c;
+  }
+
+  function radialSprite(stops) {
+    const size = Math.ceil(R * 4 * DPR);
+    const c = makeCanvas(size);
+    const g = c.getContext('2d');
+    const fill = g.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+    stops.forEach(([at, color]) => fill.addColorStop(at, color));
+    g.fillStyle = fill;
+    g.fillRect(0, 0, size, size);
+    return c;
+  }
+
+  function buildSprites() {
+    spritePx = Math.ceil(R * 2.7 * DPR);
+    spriteSize = spritePx / DPR;
+    halfPool = [];
+    sprites = KINDS.map(kind => {
+      const c = makeCanvas(spritePx);
+      const g = c.getContext('2d');
+      g.translate(spritePx / 2, spritePx / 2);
+      g.scale(R * DPR / 100, R * DPR / 100);
+      kind.draw(g);
+      return c;
+    });
+    aura = radialSprite([[0, 'rgba(255,60,40,.5)'], [.5, 'rgba(255,60,40,.3)'], [1, 'rgba(255,60,40,0)']]);
+    glow = radialSprite([[0, 'rgba(255,255,255,.9)'], [.25, 'rgba(255,170,130,.4)'], [1, 'rgba(255,140,90,0)']]);
+  }
+
+  function buildBackground() {
+    bg = makeCanvas(canvas.width, canvas.height);
+    const g = bg.getContext('2d');
+    g.scale(DPR, DPR);
+    g.fillStyle = '#1a2440';
+    g.fillRect(0, 0, W, H);
+    const scale = Math.max(R * 1.2, 44);
+    g.lineWidth = 1.5;
+    g.strokeStyle = 'rgba(255, 255, 255, .045)';
+    for (let row = 0, y = -scale; y < H + scale * 2; row++, y += scale / 2) {
+      const shift = row % 2 ? scale : 0;
+      for (let x = -scale * 2 + shift; x < W + scale * 2; x += scale * 2) {
+        g.fillStyle = '#1a2440';
+        g.beginPath(); g.arc(x, y, scale, 0, TAU); g.fill();
+        for (let ring = 1; ring >= .35; ring -= .22) {
+          g.beginPath(); g.arc(x, y, scale * ring, 0, TAU); g.stroke();
+        }
+      }
+    }
+    const shade = g.createRadialGradient(W / 2, H * .45, Math.min(W, H) * .25, W / 2, H / 2, Math.hypot(W, H) * .62);
+    shade.addColorStop(0, 'rgba(16, 23, 41, 0)');
+    shade.addColorStop(1, 'rgba(10, 14, 28, .78)');
+    g.fillStyle = shade;
+    g.fillRect(0, 0, W, H);
+  }
+
+  function resize() {
+    const oldR = R, oldDPR = DPR;
+    W = innerWidth;
+    H = innerHeight;
+    DPR = Math.min(devicePixelRatio || 1, 2);
+    canvas.width = Math.round(W * DPR);
+    canvas.height = Math.round(H * DPR);
+    R = clamp(Math.min(W, H) * .085, 30, 58);
+    G = H * 1.25;
+    if (!sprites.length || R !== oldR || DPR !== oldDPR) buildSprites();
+    buildBackground();
+  }
+
+  /* Half of a sprite with its cut face painted on, baked once when it is sliced. */
+  function bakeHalf(sprite, cut, side, inner) {
+    const c = halfPool.pop() || makeCanvas(spritePx);
+    const g = c.getContext('2d');
+    const m = spritePx / 2, far = spritePx * 1.5, face = R * DPR * .055;
+    g.setTransform(1, 0, 0, 1, 0, 0);
+    g.globalCompositeOperation = 'source-over';
+    g.clearRect(0, 0, spritePx, spritePx);
+    g.save();
+    g.translate(m, m);
+    g.rotate(cut);
+    g.beginPath();
+    g.rect(-far, side > 0 ? 0 : -far, far * 2, far);
+    g.clip();
+    g.rotate(-cut);
+    g.drawImage(sprite, -m, -m);
+    g.restore();
+    g.globalCompositeOperation = 'source-atop';
+    g.translate(m, m);
+    g.rotate(cut);
+    g.fillStyle = inner;
+    g.fillRect(-far, side > 0 ? 0 : -face, far * 2, face);
+    return c;
+  }
+
+  /* ---------- Game state ---------- */
+
+  const state = {
+    mode: 'home',          // home | play | paused | over
+    score: 0,
+    lives: MAX_LIVES,
+    time: 0,               // seconds played this run
+    speed: 1,
+    nextWave: .6,
+    queue: [],
+    combo: { n: 0, last: 0, x: 0, y: 0 },
+    grace: 0,
+    shake: 0,
+    flash: 0,
+    flashColor: '#fff',
+    best: Number(store.get('sushi-best')) || 0,
+  };
+
+  let clock = 0;
+  let objects = [], pieces = [], stains = [], floats = [], cuts = [], strokes = [], segments = [];
+
+  const PARTICLES = 520;
+  const particles = Array.from({ length: PARTICLES }, () => ({ life: 0 }));
+  let nextParticle = 0;
+
+  function emit(x, y, vx, vy, size, color, life, grain) {
+    const p = particles[nextParticle];
+    nextParticle = (nextParticle + 1) % PARTICLES;
+    p.x = x; p.y = y; p.vx = vx; p.vy = vy;
+    p.size = size; p.color = color; p.life = p.max = life;
+    p.grain = grain; p.spin = rand(-9, 9); p.rot = rand(0, TAU);
+  }
+
+  function splash(x, y, angle, color, amount) {
+    for (let i = 0; i < amount; i++) {
+      const a = angle + rand(-1.1, 1.1) + (i % 2 ? Math.PI : 0);
+      const v = rand(.8, 6) * R;
+      emit(x, y, Math.cos(a) * v, Math.sin(a) * v - R * 2, rand(.04, .13) * R, color, rand(.35, .8), false);
+    }
+    for (let i = 0; i < amount * .7; i++) {
+      const a = rand(0, TAU), v = rand(1, 7) * R;
+      emit(x, y, Math.cos(a) * v, Math.sin(a) * v - R * 3, R * .09, pick(['#fffdf6', '#f3ebd9']), rand(.5, 1), true);
+    }
+  }
+
+  /* Rising 0 to 1 over a run, driven by both time survived and score. */
+  function level() { return clamp(state.time / 140 + state.score / 5000, 0, 1); }
+
+  function launch(kind, free) {
+    const margin = R * 1.4;
+    const startY = H + R * 1.2;
+    const x = rand(margin, Math.max(margin, W - margin));
+    const peak = H * rand(.58, .92) + R * 1.2;
+    const vy = -Math.sqrt(2 * G * peak);
+    const flight = 2 * -vy / G;
+    const land = clamp(x + rand(-.35, .35) * W, margin, Math.max(margin, W - margin));
+    objects.push({
+      kind, free,
+      x, y: startY,
+      vx: (land - x) / flight,
+      vy,
+      rot: rand(0, TAU),
+      spin: rand(1.5, 4) * (Math.random() < .5 ? -1 : 1),
+    });
+  }
+
+  function direct() {
+    for (let i = state.queue.length - 1; i >= 0; i--) {
+      if (state.queue[i].at <= clock) {
+        launch(state.queue[i].kind, state.mode !== 'play');
+        state.queue.splice(i, 1);
+      }
+    }
+    if (clock < state.nextWave) return;
+
+    if (state.mode !== 'play') {
+      if (objects.length < 3) launch(Math.floor(rand(0, WASABI)), true);
+      state.nextWave = clock + rand(1, 1.8);
+      return;
+    }
+
+    const i = level();
+    const count = Math.min(7, 1 + Math.floor(i * 4.5 + Math.random() * 1.6));
+    const gap = Math.random() < .35 ? 0 : .14;
+    const hazardChance = state.time < 5 ? 0 : lerp(.07, .24, i);
+    const hazardCap = Math.ceil(count / 3);
+    let hazards = 0;
+    for (let n = 0; n < count; n++) {
+      const spicy = hazards < hazardCap && Math.random() < hazardChance;
+      if (spicy) hazards++;
+      state.queue.push({ at: clock + n * gap, kind: spicy ? WASABI : Math.floor(rand(0, WASABI)) });
+    }
+    state.speed = 1 + .55 * i;
+    state.nextWave = clock + lerp(1.9, .72, i) * rand(.9, 1.1) + count * gap;
+  }
+
+  function addScore(points) {
+    state.score += points;
+    ui.score.textContent = state.score;
+  }
+
+  function floatText(text, x, y, color, size) {
+    floats.push({ text, x: clamp(x, 90, Math.max(90, W - 90)), y: clamp(y, 90, H - 24), color, size, life: 1 });
+  }
+
+  function closeCombo() {
+    const { n, x, y } = state.combo;
+    state.combo.n = 0;
+    if (n < 2 || state.mode !== 'play') return;
+    const bonus = 5 * n * n;
+    addScore(bonus);
+    floatText(`${n}× combo +${bonus}`, x, y, '#ffd24d', clamp(R * .55 + n * 2, 22, 40));
+    sound.combo(n);
+  }
+
+  function loseLife(cause) {
+    state.lives--;
+    updateLives();
+    if (state.lives <= 0) endRun(cause);
+  }
+
+  function sliceFood(o, angle) {
+    const kind = KINDS[o.kind];
+    const nx = -Math.sin(angle), ny = Math.cos(angle);
+    const cut = angle - o.rot;
+    const push = R * rand(1.6, 2.4);
+    for (const side of [1, -1]) {
+      pieces.push({
+        x: o.x + nx * side * R * .06,
+        y: o.y + ny * side * R * .06,
+        vx: o.vx * .55 + nx * side * push + Math.cos(angle) * R * .6,
+        vy: o.vy * .4 + ny * side * push,
+        rot: o.rot,
+        spin: o.spin + side * rand(1, 3),
+        image: bakeHalf(sprites[o.kind], cut, side, kind.inner),
+        size: spriteSize,
+      });
+    }
+    splash(o.x, o.y, angle, kind.juice, 16);
+    cuts.push({ x: o.x, y: o.y, angle, life: 1 });
+    stains.push({ x: o.x, y: o.y, r: R * rand(.5, .85), color: kind.juice, life: 1, seed: rand(0, TAU) });
+    if (stains.length > 14) stains.shift();
+    sound.slice();
+
+    if (state.mode !== 'play') return;
+    if (state.combo.n && clock - state.combo.last > COMBO_GAP) closeCombo();
+    state.combo.n++;
+    state.combo.last = clock;
+    state.combo.x = o.x;
+    state.combo.y = o.y;
+    addScore(POINTS);
+  }
+
+  function burstWasabi(o) {
+    for (let i = 0; i < 46; i++) {
+      const a = rand(0, TAU), v = rand(1, 11) * R;
+      emit(o.x, o.y, Math.cos(a) * v, Math.sin(a) * v, rand(.06, .2) * R, pick(['#a4d233', '#dcf57a', '#ff4a2e', '#ffb02e']), rand(.4, .9), false);
+    }
+    state.flash = 1;
+    state.flashColor = '#ff3d1f';
+    sound.wasabi();
+    if (!calm) state.shake = 1;
+    if (navigator.vibrate) navigator.vibrate(90);
+    if (state.mode !== 'play' || clock < state.grace) return;
+    state.grace = clock + .5;   // one swipe through a cluster costs one life
+    state.combo.n = 0;
+    floatText('Too spicy!', o.x, o.y, '#ff6a4d', 30);
+    loseLife('wasabi');
+  }
+
+  function segmentHits(s, x, y, r) {
+    const dx = s.x1 - s.x0, dy = s.y1 - s.y0;
+    const t = clamp(((x - s.x0) * dx + (y - s.y0) * dy) / (dx * dx + dy * dy), 0, 1);
+    const ex = s.x0 + dx * t - x, ey = s.y0 + dy * t - y;
+    return ex * ex + ey * ey <= r * r;
+  }
+
+  function cutThrough() {
+    for (const s of segments) {
+      const angle = Math.atan2(s.y1 - s.y0, s.x1 - s.x0);
+      for (let i = objects.length - 1; i >= 0; i--) {
+        const o = objects[i];
+        const spicy = o.kind === WASABI;
+        if (!segmentHits(s, o.x, o.y, R * (spicy ? .8 : 1.08))) continue;
+        objects.splice(i, 1);
+        if (spicy) burstWasabi(o); else sliceFood(o, angle);
+      }
+    }
+    segments.length = 0;
+  }
+
+  function update(dt) {
+    clock += dt;
+    if (state.mode === 'play') state.time += dt;
+    direct();
+
+    const t = dt * state.speed;
+    for (let i = objects.length - 1; i >= 0; i--) {
+      const o = objects[i];
+      o.vy += G * t;
+      o.x += o.vx * t;
+      o.y += o.vy * t;
+      o.rot += o.spin * t;
+      if (o.kind === WASABI && Math.random() < dt * 22) {
+        emit(o.x + rand(-.6, .6) * R, o.y + rand(-.6, .6) * R, rand(-.5, .5) * R, -rand(.5, 1.6) * R, rand(.03, .08) * R, pick(['#ff5a35', '#ffb02e']), rand(.25, .5), false);
+      }
+      if (o.vy > 0 && o.y > H + R * 1.3) {
+        objects.splice(i, 1);
+        if (o.kind !== WASABI && !o.free && state.mode === 'play') {
+          floatText('Dropped', o.x, H - 44, '#ff8d75', 20);
+          sound.miss();
+          loseLife('drop');
+        }
+      }
+    }
+
+    cutThrough();
+    if (state.combo.n && clock - state.combo.last > COMBO_GAP) closeCombo();
+
+    for (let i = pieces.length - 1; i >= 0; i--) {
+      const p = pieces[i];
+      p.vy += G * dt;
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      p.rot += p.spin * dt;
+      if (p.y > H + R * 2) {
+        if (p.size === spriteSize) halfPool.push(p.image);
+        pieces.splice(i, 1);
+      }
+    }
+
+    for (const p of particles) {
+      if (p.life <= 0) continue;
+      p.life -= dt;
+      p.vy += G * .8 * dt;
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      p.rot += p.spin * dt;
+    }
+
+    for (let i = stains.length - 1; i >= 0; i--) if ((stains[i].life -= dt / 3.5) <= 0) stains.splice(i, 1);
+    for (let i = floats.length - 1; i >= 0; i--) if ((floats[i].life -= dt / 1.1) <= 0) floats.splice(i, 1);
+    for (let i = cuts.length - 1; i >= 0; i--) if ((cuts[i].life -= dt / .14) <= 0) cuts.splice(i, 1);
+    state.shake = Math.max(0, state.shake - dt * 3);
+    state.flash = Math.max(0, state.flash - dt * 2.6);
+  }
+
+  /* ---------- Rendering ---------- */
+
+  function chaikin(pts) {
+    const out = [pts[0]];
+    for (let i = 0; i < pts.length - 1; i++) {
+      const a = pts[i], b = pts[i + 1];
+      out.push({ x: a.x * .75 + b.x * .25, y: a.y * .75 + b.y * .25 }, { x: a.x * .25 + b.x * .75, y: a.y * .25 + b.y * .75 });
+    }
+    out.push(pts[pts.length - 1]);
+    return out;
+  }
+
+  function ribbon(pts, width) {
+    const n = pts.length;
+    const left = [], right = [];
+    for (let i = 0; i < n; i++) {
+      const a = pts[Math.max(0, i - 1)], b = pts[Math.min(n - 1, i + 1)];
+      const dx = b.x - a.x, dy = b.y - a.y;
+      const len = Math.hypot(dx, dy) || 1;
+      const w = width * Math.pow(i / (n - 1), .7);
+      left.push(pts[i].x - dy / len * w, pts[i].y + dx / len * w);
+      right.push(pts[i].x + dy / len * w, pts[i].y - dx / len * w);
+    }
+    ctx.beginPath();
+    ctx.moveTo(left[0], left[1]);
+    for (let i = 2; i < left.length; i += 2) ctx.lineTo(left[i], left[i + 1]);
+    for (let i = right.length - 2; i >= 0; i -= 2) ctx.lineTo(right[i], right[i + 1]);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  function drawTrails(now) {
+    const width = R * .15;
+    ctx.globalCompositeOperation = 'lighter';
+    for (let s = strokes.length - 1; s >= 0; s--) {
+      const stroke = strokes[s];
+      while (stroke.pts.length && now - stroke.pts[0].t > TRAIL_LIFE) stroke.pts.shift();
+      if (!stroke.pts.length) {
+        if (stroke.done) strokes.splice(s, 1);
+        continue;
+      }
+      if (stroke.pts.length < 2) continue;
+      const smooth = chaikin(stroke.pts);
+      for (const [scale, color, alpha] of TRAIL_LAYERS) {
+        ctx.fillStyle = color;
+        ctx.globalAlpha = alpha;
+        ribbon(smooth, width * scale);
+      }
+      if (!stroke.done) {
+        const tip = stroke.pts[stroke.pts.length - 1], size = R * 1.5;
+        ctx.globalAlpha = .75;
+        ctx.drawImage(glow, tip.x - size / 2, tip.y - size / 2, size, size);
+      }
+    }
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = 'source-over';
+  }
+
+  function render(now) {
+    const jolt = state.shake * state.shake * R * .35;
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    ctx.drawImage(bg, 0, 0, W, H);
+    if (jolt) ctx.translate(rand(-jolt, jolt), rand(-jolt, jolt));
+
+    for (const s of stains) {
+      ctx.globalAlpha = s.life * .14;
+      ctx.fillStyle = s.color;
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, s.r, 0, TAU);
+      ctx.arc(s.x + Math.cos(s.seed) * s.r * 1.3, s.y + Math.sin(s.seed) * s.r * 1.3, s.r * .28, 0, TAU);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+
+    const half = spriteSize / 2;
+    for (const p of pieces) {
+      ctx.save();
+      ctx.translate(p.x, p.y);
+      ctx.rotate(p.rot);
+      ctx.drawImage(p.image, -p.size / 2, -p.size / 2, p.size, p.size);
+      ctx.restore();
+    }
+    for (const o of objects) {
+      if (o.kind === WASABI) {
+        const size = R * (2.7 + Math.sin(clock * 9) * .22);
+        ctx.drawImage(aura, o.x - size / 2, o.y - size / 2, size, size);
+      }
+      ctx.save();
+      ctx.translate(o.x, o.y);
+      ctx.rotate(o.rot);
+      ctx.drawImage(sprites[o.kind], -half, -half, spriteSize, spriteSize);
+      ctx.restore();
+    }
+
+    for (const p of particles) {
+      if (p.life <= 0) continue;
+      ctx.globalAlpha = Math.min(1, p.life / p.max * 2);
+      ctx.fillStyle = p.color;
+      ctx.beginPath();
+      if (p.grain) ctx.ellipse(p.x, p.y, p.size * 1.7, p.size * .75, p.rot, 0, TAU);
+      else ctx.arc(p.x, p.y, p.size, 0, TAU);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+
+    ctx.strokeStyle = '#fff';
+    ctx.lineCap = 'round';
+    for (const c of cuts) {
+      const reach = R * 1.5;
+      const dx = Math.cos(c.angle) * reach, dy = Math.sin(c.angle) * reach;
+      ctx.globalAlpha = c.life;
+      ctx.lineWidth = R * .07 * c.life + 1;
+      ctx.beginPath();
+      ctx.moveTo(c.x - dx, c.y - dy);
+      ctx.lineTo(c.x + dx, c.y + dy);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+
+    drawTrails(now);
+
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.lineJoin = 'round';
+    for (const f of floats) {
+      ctx.globalAlpha = Math.min(1, f.life * 2.5);
+      ctx.font = `700 ${f.size}px "Hiragino Mincho ProN", "Yu Mincho", Georgia, serif`;
+      const y = f.y - (1 - f.life) * 34;
+      ctx.lineWidth = 5;
+      ctx.strokeStyle = 'rgba(16, 23, 41, .85)';
+      ctx.strokeText(f.text, f.x, y);
+      ctx.fillStyle = f.color;
+      ctx.fillText(f.text, f.x, y);
+    }
+    ctx.globalAlpha = 1;
+
+    if (state.flash > 0) {
+      ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+      ctx.globalAlpha = state.flash * state.flash * .42;
+      ctx.fillStyle = state.flashColor;
+      ctx.fillRect(0, 0, W, H);
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  let lastFrame = 0;
+  function frame(ms) {
+    requestAnimationFrame(frame);
+    const now = ms / 1000;
+    const dt = Math.min(now - lastFrame, .05);
+    lastFrame = now;
+    if (state.mode !== 'paused') update(dt);
+    render(clock);
+  }
+
+  /* ---------- Blade input (mouse drag and touch swipe share pointer events) ---------- */
+
+  const blade = { id: null, x: 0, y: 0, stroke: null };
+
+  function bladeMove(x, y) {
+    if (Math.hypot(x - blade.x, y - blade.y) < SWIPE_MIN) return;
+    if (segments.length < 96) segments.push({ x0: blade.x, y0: blade.y, x1: x, y1: y });
+    blade.x = x;
+    blade.y = y;
+    blade.stroke.pts.push({ x, y, t: clock });
+    if (blade.stroke.pts.length > 40) blade.stroke.pts.shift();
+  }
+
+  function bladeUp() {
+    if (blade.id === null) return;
+    blade.id = null;
+    blade.stroke.done = true;
+    closeCombo();
+  }
+
+  canvas.addEventListener('pointerdown', e => {
+    if (blade.id !== null || e.button !== 0) return;
+    e.preventDefault();
+    sound.wake();
+    blade.id = e.pointerId;
+    blade.x = e.clientX;
+    blade.y = e.clientY;
+    blade.stroke = { pts: [{ x: e.clientX, y: e.clientY, t: clock }], done: false };
+    strokes.push(blade.stroke);
+    canvas.setPointerCapture(e.pointerId);
+  });
+
+  canvas.addEventListener('pointermove', e => {
+    if (e.pointerId !== blade.id) return;
+    const samples = e.getCoalescedEvents ? e.getCoalescedEvents() : [];
+    for (const s of samples.length ? samples : [e]) bladeMove(s.clientX, s.clientY);
+  });
+
+  for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) {
+    canvas.addEventListener(type, e => { if (e.pointerId === blade.id) bladeUp(); });
+  }
+
+  canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+  /* ---------- Screens and flow ---------- */
+
+  const ui = {
+    score: $('score'), hud: $('hud'), hudBest: $('hudBest'), lives: $('lives'),
+    home: $('home'), homeBest: $('homeBest'),
+    paused: $('paused'), over: $('over'), overTitle: $('overTitle'),
+    finalScore: $('finalScore'), tally: $('tally'),
+  };
+  const lifeIcons = [...ui.lives.children];
+  let overTimer = 0;
+
+  function show(screen) {
+    for (const s of [ui.home, ui.paused, ui.over]) s.classList.toggle('show', s === screen);
+  }
+
+  function showBest() {
+    ui.homeBest.textContent = state.best;
+    ui.hudBest.textContent = `Best ${state.best}`;
+  }
+
+  function updateLives() {
+    lifeIcons.forEach((icon, i) => icon.classList.toggle('gone', i >= state.lives));
+    const n = Math.max(0, state.lives);
+    ui.lives.setAttribute('aria-label', `${n} ${n === 1 ? 'life' : 'lives'} left`);
+  }
+
+  function startRun() {
+    clearTimeout(overTimer);
+    sound.wake();
+    Object.assign(state, { mode: 'play', score: 0, lives: MAX_LIVES, time: 0, speed: 1, nextWave: clock + .8, queue: [], grace: 0 });
+    state.combo.n = 0;
+    for (const o of objects) o.free = true;   // whatever is mid-air from the menu can't cost a life
+    ui.score.textContent = '0';
+    updateLives();
+    showBest();
+    show(null);
+    ui.hud.classList.add('show');
+  }
+
+  function endRun(cause) {
+    closeCombo();
+    state.mode = 'over';
+    state.queue = [];
+    state.speed = 1;
+    state.nextWave = clock + 1.4;
+    const record = state.score > state.best;
+    if (record) {
+      state.best = state.score;
+      store.set('sushi-best', String(state.best));
+    }
+    sound.over();
+    ui.overTitle.textContent = cause === 'wasabi' ? 'Too spicy!' : 'Dropped it!';
+    ui.finalScore.textContent = state.score;
+    ui.tally.textContent = record ? 'New high score' : `High score ${state.best}`;
+    ui.tally.classList.toggle('record', record);
+    showBest();
+    // A beat to see the last cut land; also stops a mid-swipe tap hitting a button.
+    overTimer = setTimeout(() => {
+      if (state.mode !== 'over') return;
+      ui.hud.classList.remove('show');
+      show(ui.over);
+      $('again').focus({ preventScroll: true });
+    }, 800);
+  }
+
+  function pause() {
+    if (state.mode !== 'play') return;
+    bladeUp();
+    state.mode = 'paused';
+    show(ui.paused);
+    $('resume').focus({ preventScroll: true });
+  }
+
+  function resume() {
+    if (state.mode !== 'paused') return;
+    state.mode = 'play';
+    show(null);
+  }
+
+  function goHome() {
+    clearTimeout(overTimer);
+    state.mode = 'home';
+    state.queue = [];
+    state.speed = 1;
+    state.nextWave = clock + .4;
+    for (const o of objects) o.free = true;
+    objects = objects.filter(o => o.kind !== WASABI);
+    ui.hud.classList.remove('show');
+    showBest();
+    show(ui.home);
+  }
+
+  $('play').addEventListener('click', startRun);
+  $('again').addEventListener('click', startRun);
+  $('pause').addEventListener('click', pause);
+  $('resume').addEventListener('click', resume);
+  $('quit').addEventListener('click', goHome);
+  $('toHome').addEventListener('click', goHome);
+
+  const muteButton = $('mute');
+  muteButton.setAttribute('aria-pressed', sound.muted);
+  muteButton.addEventListener('click', () => {
+    sound.wake();
+    muteButton.setAttribute('aria-pressed', sound.toggle());
+  });
+
+  addEventListener('keydown', e => {
+    if (e.key === 'Escape' || e.key === 'p') {
+      if (state.mode === 'play') pause();
+      else if (state.mode === 'paused') resume();
+    }
+  });
+  document.addEventListener('visibilitychange', () => { if (document.hidden) pause(); });
+  addEventListener('resize', resize);
+
+  /* ---------- PWA: manifest embedded here, service worker in sw.js ---------- */
+
+  function renderIcon(size) {
+    const c = makeCanvas(size);
+    const g = c.getContext('2d');
+    g.fillStyle = '#1a2440';
+    g.fillRect(0, 0, size, size);
+    g.translate(size / 2, size / 2);
+    g.scale(size / 330, size / 330);   // keeps the roll inside the maskable safe zone
+    drawMaki(g);
+    return c.toDataURL('image/png');
+  }
+
+  function setUpPWA() {
+    if (!location.protocol.startsWith('http')) return;   // opened as a local file
+
+    const icon192 = renderIcon(192), icon512 = renderIcon(512);
+    const base = new URL('./', location.href).href;
+    const manifest = {
+      id: base,
+      name: 'Sushi Slash',
+      short_name: 'Sushi Slash',
+      description: 'Swipe through flying sushi and spare the wasabi. By Eitan Feldman.',
+      start_url: base,
+      scope: base,
+      display: 'fullscreen',
+      background_color: '#1a2440',
+      theme_color: '#1a2440',
+      categories: ['games'],
+      icons: [
+        { src: icon192, sizes: '192x192', type: 'image/png', purpose: 'any' },
+        { src: icon512, sizes: '512x512', type: 'image/png', purpose: 'any' },
+        { src: icon512, sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+      ],
+    };
+
+    const link = document.createElement('link');
+    link.rel = 'manifest';
+    link.href = 'data:application/manifest+json;charset=utf-8,' + encodeURIComponent(JSON.stringify(manifest));
+    document.head.append(link);
+
+    const touch = document.createElement('link');
+    touch.rel = 'apple-touch-icon';
+    touch.href = icon192;
+    document.head.append(touch);
+
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+
+    const installButton = $('install');
+    let installPrompt = null;
+    addEventListener('beforeinstallprompt', e => {
+      e.preventDefault();
+      installPrompt = e;
+      installButton.hidden = false;
+    });
+    installButton.addEventListener('click', () => {
+      installButton.hidden = true;
+      if (installPrompt) installPrompt.prompt();
+      installPrompt = null;
+    });
+    addEventListener('appinstalled', () => { installButton.hidden = true; });
+  }
+
+  resize();
+  showBest();
+  updateLives();
+  setUpPWA();
+  requestAnimationFrame(ms => { lastFrame = ms / 1000; frame(ms); });
+})();
+</script>
+</body>
+</html>
