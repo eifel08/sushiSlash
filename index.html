@@ -215,6 +215,32 @@
   #mute[aria-pressed="true"] .waves { display: none; }
   #mute[aria-pressed="false"] .off { display: none; }
 
+  /* Landscape only: portrait gets this screen instead of the game. */
+  #rotate {
+    position: absolute;
+    inset: 0;
+    z-index: 10;
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 18px;
+    padding: 24px;
+    background: var(--indigo);
+    text-align: center;
+  }
+  #rotate p { margin: 0; max-width: 18em; font-size: 16px; line-height: 1.5; color: var(--ink-soft); }
+  #rotate h2 { font-size: 32px; }
+  .phone {
+    width: 44px;
+    height: 76px;
+    border: 3px solid var(--ink);
+    border-radius: 9px;
+    animation: tip 2.4s ease-in-out infinite;
+  }
+  @keyframes tip { 0%, 25% { transform: none; } 60%, 100% { transform: rotate(90deg); } }
+  @media (orientation: portrait) { #rotate { display: flex; } }
+
   @media (max-height: 430px) {
     .byline { margin-top: 6px; }
     .best { margin-top: 8px; }
@@ -226,7 +252,7 @@
 
   @media (prefers-reduced-motion: reduce) {
     .title .upper, .title .lower { animation-duration: 1ms; animation-delay: 0s; }
-    .title .edge { animation: none; }
+    .title .edge, .phone { animation: none; }
     .screen { transition-duration: .01s; transform: none; }
   }
 </style>
@@ -284,6 +310,13 @@
   </div>
 </section>
 
+<section id="rotate" aria-label="Rotate your device">
+  <div class="phone" aria-hidden="true"></div>
+  <h2>Turn sideways</h2>
+  <p>Sushi Slash plays in landscape. Rotate your device or widen this window.</p>
+  <button class="btn quiet" id="lockLandscape" hidden>Lock to landscape</button>
+</section>
+
 <script>
 (() => {
   'use strict';
@@ -303,8 +336,15 @@
   };
 
   const MAX_LIVES = 3;
-  const POINTS = 10;
+  const BASE_POINTS = 10;
+  const POINT_STEP = 5;    // each slice gains this much...
+  const POINT_TIER = 500;  // ...for every this many points on the board
+  const COMBO_MIN = 3;     // fewer cuts than this in a swipe earn no bonus
   const COMBO_GAP = 0.4;   // seconds between cuts that still count as one swipe
+  const MATCHA_TIME = 3.5; // seconds of slow motion
+  const MATCHA_SLOW = 0.28;
+  const TEA_COOLDOWN = 45; // minimum seconds between tea cups
+  const TEA_CHANCE = 0.03; // per wave, once the cooldown has passed
   const SWIPE_MIN = 1;     // px; shorter pointer moves are ignored
   const TRAIL_LIFE = 0.17;
   const TRAIL_LAYERS = [[3.4, '#ff7a45', .16], [1.9, '#ffb38a', .36], [.7, '#ffffff', 1]];
@@ -364,6 +404,8 @@
       slice() { swish(rand(1800, 2600), 700, .13, .3); tone(rand(150, 190), .07, .12, 'sine'); },
       combo(n) { [523, 659, 784, 1047, 1319].slice(0, clamp(n, 2, 5)).forEach((f, i) => tone(f, .16, .1, 'triangle', i * .055)); },
       wasabi() { swish(5000, 300, .5, .4); tone(90, .4, .4, 'sawtooth'); },
+      matcha() { [392, 587, 784].forEach((f, i) => tone(f, .7, .1, 'sine', i * .1)); },
+      slash(n) { swish(3000, 1000, .08, .2); tone(440 * Math.pow(2, Math.min(n, 24) / 12), .12, .09); },
       miss() { tone(196, .2, .1, 'sine'); },
       over() { [392, 311, 233].forEach((f, i) => tone(f, .34, .13, 'triangle', i * .15)); },
     };
@@ -516,6 +558,29 @@
     c.beginPath(); c.moveTo(-36, 40); c.lineTo(-18, 26); c.lineTo(0, 40); c.lineTo(18, 26); c.lineTo(36, 40); c.stroke();
   }
 
+  function drawTea(c) {
+    c.lineCap = 'round';
+    c.strokeStyle = 'rgba(255, 255, 255, .75)';
+    c.lineWidth = 7;
+    for (const x of [-26, 4, 32]) {
+      c.beginPath(); c.moveTo(x, -66); c.bezierCurveTo(x + 16, -78, x - 16, -86, x, -100); c.stroke();
+    }
+    const glaze = c.createLinearGradient(-72, 0, 72, 0);
+    glaze.addColorStop(0, '#d9ccab');
+    glaze.addColorStop(.45, '#fbf4e0');
+    glaze.addColorStop(1, '#c4b48c');
+    c.fillStyle = glaze;
+    c.beginPath(); c.moveTo(-74, -48); c.lineTo(74, -48); c.bezierCurveTo(70, 32, 60, 80, 42, 90); c.lineTo(-42, 90); c.bezierCurveTo(-60, 80, -70, 32, -74, -48); c.fill();
+    c.fillStyle = '#4e7d2c';
+    c.beginPath(); c.moveTo(0, -8); c.quadraticCurveTo(38, 16, 0, 60); c.quadraticCurveTo(-38, 16, 0, -8); c.fill();
+    c.strokeStyle = '#c7e37a'; c.lineWidth = 4;
+    c.beginPath(); c.moveTo(0, 2); c.lineTo(0, 48); c.stroke();
+    c.fillStyle = '#c9a24a';
+    c.beginPath(); c.ellipse(0, -48, 75, 19, 0, 0, TAU); c.fill();
+    c.fillStyle = '#93c944';
+    c.beginPath(); c.ellipse(0, -48, 64, 13, 0, 0, TAU); c.fill();
+  }
+
   const KINDS = [
     { draw: drawMaki, juice: '#ff8a65', inner: '#fff4e2' },
     { draw: drawNigiri, juice: '#ff6f47', inner: '#ffb08f' },
@@ -525,6 +590,8 @@
   ];
   const WASABI = KINDS.length;
   KINDS[WASABI] = { draw: drawWasabi, juice: '#a4d233', inner: '#dcf57a' };
+  const TEA = WASABI + 1;
+  KINDS[TEA] = { draw: drawTea, juice: '#9ccc4a', inner: '#c7e37a' };
 
   /* ---------- Canvas, sprites, background ---------- */
 
@@ -532,7 +599,7 @@
   const ctx = canvas.getContext('2d', { alpha: false });
   let W = 0, H = 0, DPR = 1, R = 40, G = 800;
   let spriteSize = 0, spritePx = 0, sprites = [];
-  let aura, glow, bg;
+  let aura, halo, glow, bg;
   let halfPool = [];
 
   function makeCanvas(w, h = w) {
@@ -566,6 +633,7 @@
       return c;
     });
     aura = radialSprite([[0, 'rgba(255,60,40,.5)'], [.5, 'rgba(255,60,40,.3)'], [1, 'rgba(255,60,40,0)']]);
+    halo = radialSprite([[0, 'rgba(200,240,120,.55)'], [.5, 'rgba(200,240,120,.3)'], [1, 'rgba(200,240,120,0)']]);
     glow = radialSprite([[0, 'rgba(255,255,255,.9)'], [.25, 'rgba(255,170,130,.4)'], [1, 'rgba(255,140,90,0)']]);
   }
 
@@ -602,10 +670,11 @@
     DPR = Math.min(devicePixelRatio || 1, 2);
     canvas.width = Math.round(W * DPR);
     canvas.height = Math.round(H * DPR);
-    R = clamp(Math.min(W, H) * .085, 30, 58);
-    G = H * 1.25;
+    R = clamp(Math.min(W, H) * .095, 32, 58);
+    G = H * .8;   // scaled to screen height, so a throw hangs about 3s on any landscape screen
     if (!sprites.length || R !== oldR || DPR !== oldDPR) buildSprites();
     buildBackground();
+    if (H > W) pause();
   }
 
   /* Half of a sprite with its cut face painted on, baked once when it is sliced. */
@@ -640,7 +709,10 @@
     score: 0,
     lives: MAX_LIVES,
     time: 0,               // seconds played this run
-    speed: 1,
+    speed: .85,
+    slow: 1,               // world time multiplier, eased toward MATCHA_SLOW
+    matcha: null,          // { until, cup, touched, slashes, bonus } while slow motion runs
+    nextTea: 0,
     nextWave: .6,
     queue: [],
     combo: { n: 0, last: 0, x: 0, y: 0 },
@@ -679,18 +751,20 @@
   }
 
   /* Rising 0 to 1 over a run, driven by both time survived and score. */
-  function level() { return clamp(state.time / 140 + state.score / 5000, 0, 1); }
+  function level() { return clamp(state.time / 180 + state.score / 8000, 0, 1); }
 
-  function launch(kind, free) {
-    const margin = R * 1.4;
+  function pointValue() { return BASE_POINTS + POINT_STEP * Math.floor(state.score / POINT_TIER); }
+
+  function launch(kind) {
+    const margin = Math.max(R * 1.4, W * .1);
     const startY = H + R * 1.2;
-    const x = rand(margin, Math.max(margin, W - margin));
-    const peak = H * rand(.58, .92) + R * 1.2;
+    const x = rand(margin, W - margin);
+    const peak = H * rand(.55, .86) + R * 1.2;
     const vy = -Math.sqrt(2 * G * peak);
     const flight = 2 * -vy / G;
-    const land = clamp(x + rand(-.35, .35) * W, margin, Math.max(margin, W - margin));
+    const land = clamp(x + rand(-.25, .25) * W, margin, W - margin);
     objects.push({
-      kind, free,
+      kind,
       x, y: startY,
       vx: (land - x) / flight,
       vy,
@@ -700,38 +774,46 @@
   }
 
   function direct() {
+    if (state.mode === 'over' || state.matcha) return;
     for (let i = state.queue.length - 1; i >= 0; i--) {
       if (state.queue[i].at <= clock) {
-        launch(state.queue[i].kind, state.mode !== 'play');
+        launch(state.queue[i].kind);
         state.queue.splice(i, 1);
       }
     }
     if (clock < state.nextWave) return;
 
     if (state.mode !== 'play') {
-      if (objects.length < 3) launch(Math.floor(rand(0, WASABI)), true);
+      if (objects.length < 3) launch(Math.floor(rand(0, WASABI)));
       state.nextWave = clock + rand(1, 1.8);
       return;
     }
 
-    const i = level();
-    const count = Math.min(7, 1 + Math.floor(i * 4.5 + Math.random() * 1.6));
+    // Eased so the opening stays at one slow item every few seconds.
+    const i = Math.pow(level(), 1.5);
+    const count = Math.min(6, 1 + Math.floor(i * 5 + Math.random() * (.3 + i * 1.3)));
     const gap = Math.random() < .35 ? 0 : .14;
-    const hazardChance = state.time < 5 ? 0 : lerp(.07, .24, i);
+    const hazardChance = state.time < 20 ? 0 : lerp(.05, .22, i);
     const hazardCap = Math.ceil(count / 3);
+    if (clock >= state.nextTea && Math.random() < TEA_CHANCE) {
+      state.nextTea = clock + TEA_COOLDOWN;
+      state.queue.push({ at: clock, kind: TEA });
+    }
     let hazards = 0;
     for (let n = 0; n < count; n++) {
       const spicy = hazards < hazardCap && Math.random() < hazardChance;
       if (spicy) hazards++;
       state.queue.push({ at: clock + n * gap, kind: spicy ? WASABI : Math.floor(rand(0, WASABI)) });
     }
-    state.speed = 1 + .55 * i;
-    state.nextWave = clock + lerp(1.9, .72, i) * rand(.9, 1.1) + count * gap;
+    state.speed = lerp(.85, 1.45, i);
+    state.nextWave = clock + lerp(3.2, .8, i) * rand(.9, 1.1) + count * gap;
   }
 
   function addScore(points) {
+    const before = pointValue();
     state.score += points;
     ui.score.textContent = state.score;
+    if (pointValue() > before) floatText(`Slices now worth ${pointValue()}`, W / 2, H * .24, '#ffd24d', 24);
   }
 
   function floatText(text, x, y, color, size) {
@@ -741,7 +823,7 @@
   function closeCombo() {
     const { n, x, y } = state.combo;
     state.combo.n = 0;
-    if (n < 2 || state.mode !== 'play') return;
+    if (n < COMBO_MIN || state.mode !== 'play') return;
     const bonus = 5 * n * n;
     addScore(bonus);
     floatText(`${n}× combo +${bonus}`, x, y, '#ffd24d', clamp(R * .55 + n * 2, 22, 40));
@@ -754,7 +836,7 @@
     if (state.lives <= 0) endRun(cause);
   }
 
-  function sliceFood(o, angle) {
+  function split(o, angle) {
     const kind = KINDS[o.kind];
     const nx = -Math.sin(angle), ny = Math.cos(angle);
     const cut = angle - o.rot;
@@ -776,14 +858,65 @@
     stains.push({ x: o.x, y: o.y, r: R * rand(.5, .85), color: kind.juice, life: 1, seed: rand(0, TAU) });
     if (stains.length > 14) stains.shift();
     sound.slice();
+  }
 
+  function sliceFood(o, angle) {
+    split(o, angle);
     if (state.mode !== 'play') return;
     if (state.combo.n && clock - state.combo.last > COMBO_GAP) closeCombo();
     state.combo.n++;
     state.combo.last = clock;
     state.combo.x = o.x;
     state.combo.y = o.y;
-    addScore(POINTS);
+    addScore(pointValue());
+  }
+
+  /* The cup stays whole and hovers; everything but wasabi is cut on the spot. */
+  function startMatcha(cup) {
+    closeCombo();
+    addScore(pointValue());
+    cup.held = true;
+    cup.kick = 0;
+    cup.rot = Math.atan2(Math.sin(cup.rot), Math.cos(cup.rot));
+    cup.homeX = clamp(cup.x, W * .2, W * .8);
+    cup.homeY = clamp(cup.y, H * .32, H * .68);
+    state.matcha = { until: clock + MATCHA_TIME, cup, touched: true, slashes: 0, bonus: 0 };
+    floatText('Matcha time!', W / 2, H * .16, '#d8f08a', 34);
+    sound.matcha();
+    for (let i = objects.length - 1; i >= 0; i--) {
+      const o = objects[i];
+      if (o.kind === WASABI || o.kind === TEA) continue;
+      objects.splice(i, 1);
+      split(o, rand(0, TAU));
+      addScore(pointValue());
+    }
+  }
+
+  /* A slash counts when the blade enters the cup, so it has to leave and come back. */
+  function slashCup(s) {
+    const m = state.matcha;
+    if (!segmentHits(s, m.cup.x, m.cup.y, R * 1.15)) { m.touched = false; return; }
+    if (m.touched) return;
+    m.touched = true;
+    m.slashes++;
+    const points = pointValue() * 2;
+    m.bonus += points;
+    addScore(points);
+    m.cup.kick = 1;
+    const angle = Math.atan2(s.y1 - s.y0, s.x1 - s.x0);
+    splash(m.cup.x, m.cup.y, angle, KINDS[TEA].juice, 8);
+    cuts.push({ x: m.cup.x, y: m.cup.y, angle, life: 1 });
+    floatText(`+${points}`, m.cup.x + rand(-R, R), m.cup.y - R * 1.5, '#d8f08a', 24);
+    sound.slash(m.slashes);
+  }
+
+  function endMatcha() {
+    const { cup, bonus } = state.matcha;
+    state.matcha = null;
+    state.nextWave = clock + .8;
+    objects.splice(objects.indexOf(cup), 1);
+    split(cup, rand(0, TAU));
+    if (bonus) floatText(`Matcha bonus +${bonus}`, W / 2, H * .16, '#d8f08a', 30);
   }
 
   function burstWasabi(o) {
@@ -814,9 +947,13 @@
     for (const s of segments) {
       const angle = Math.atan2(s.y1 - s.y0, s.x1 - s.x0);
       for (let i = objects.length - 1; i >= 0; i--) {
+        if (state.mode === 'over') { segments.length = 0; return; }
         const o = objects[i];
+        if (!o) continue;   // startMatcha can shrink the list mid-loop
+        if (o.held) { slashCup(s); continue; }
         const spicy = o.kind === WASABI;
         if (!segmentHits(s, o.x, o.y, R * (spicy ? .8 : 1.08))) continue;
+        if (o.kind === TEA) { startMatcha(o); continue; }
         objects.splice(i, 1);
         if (spicy) burstWasabi(o); else sliceFood(o, angle);
       }
@@ -827,21 +964,31 @@
   function update(dt) {
     clock += dt;
     if (state.mode === 'play') state.time += dt;
+    if (state.matcha && clock >= state.matcha.until) endMatcha();
+    state.slow += ((state.matcha ? MATCHA_SLOW : 1) - state.slow) * Math.min(1, dt * 10);
+    const world = dt * state.slow;
     direct();
 
-    const t = dt * state.speed;
+    const t = world * state.speed;
     for (let i = objects.length - 1; i >= 0; i--) {
       const o = objects[i];
+      if (o.held) {
+        o.x += (o.homeX - o.x) * Math.min(1, dt * 5);
+        o.y += (o.homeY - o.y) * Math.min(1, dt * 5);
+        o.rot -= o.rot * Math.min(1, dt * 6);
+        o.kick = Math.max(0, o.kick - dt * 7);
+        continue;
+      }
       o.vy += G * t;
       o.x += o.vx * t;
       o.y += o.vy * t;
       o.rot += o.spin * t;
-      if (o.kind === WASABI && Math.random() < dt * 22) {
+      if (o.kind === WASABI && Math.random() < world * 22) {
         emit(o.x + rand(-.6, .6) * R, o.y + rand(-.6, .6) * R, rand(-.5, .5) * R, -rand(.5, 1.6) * R, rand(.03, .08) * R, pick(['#ff5a35', '#ffb02e']), rand(.25, .5), false);
       }
       if (o.vy > 0 && o.y > H + R * 1.3) {
         objects.splice(i, 1);
-        if (o.kind !== WASABI && !o.free && state.mode === 'play') {
+        if (o.kind < WASABI && state.mode === 'play') {
           floatText('Dropped', o.x, H - 44, '#ff8d75', 20);
           sound.miss();
           loseLife('drop');
@@ -854,10 +1001,10 @@
 
     for (let i = pieces.length - 1; i >= 0; i--) {
       const p = pieces[i];
-      p.vy += G * dt;
-      p.x += p.vx * dt;
-      p.y += p.vy * dt;
-      p.rot += p.spin * dt;
+      p.vy += G * 1.3 * world;
+      p.x += p.vx * world;
+      p.y += p.vy * world;
+      p.rot += p.spin * world;
       if (p.y > H + R * 2) {
         if (p.size === spriteSize) halfPool.push(p.image);
         pieces.splice(i, 1);
@@ -866,11 +1013,11 @@
 
     for (const p of particles) {
       if (p.life <= 0) continue;
-      p.life -= dt;
-      p.vy += G * .8 * dt;
-      p.x += p.vx * dt;
-      p.y += p.vy * dt;
-      p.rot += p.spin * dt;
+      p.life -= world;
+      p.vy += G * 1.2 * world;
+      p.x += p.vx * world;
+      p.y += p.vy * world;
+      p.rot += p.spin * world;
     }
 
     for (let i = stains.length - 1; i >= 0; i--) if ((stains[i].life -= dt / 3.5) <= 0) stains.splice(i, 1);
@@ -952,6 +1099,11 @@
       ctx.arc(s.x + Math.cos(s.seed) * s.r * 1.3, s.y + Math.sin(s.seed) * s.r * 1.3, s.r * .28, 0, TAU);
       ctx.fill();
     }
+    if (state.slow < 1) {
+      ctx.globalAlpha = (1 - state.slow) / (1 - MATCHA_SLOW) * .2;
+      ctx.fillStyle = '#8fd13f';
+      ctx.fillRect(-R, -R, W + R * 2, H + R * 2);
+    }
     ctx.globalAlpha = 1;
 
     const half = spriteSize / 2;
@@ -963,15 +1115,27 @@
       ctx.restore();
     }
     for (const o of objects) {
-      if (o.kind === WASABI) {
-        const size = R * (2.7 + Math.sin(clock * 9) * .22);
-        ctx.drawImage(aura, o.x - size / 2, o.y - size / 2, size, size);
+      if (o.kind >= WASABI) {
+        const spicy = o.kind === WASABI;
+        const size = R * ((spicy ? 2.7 : 3.3) + Math.sin(clock * 9) * .22);
+        ctx.drawImage(spicy ? aura : halo, o.x - size / 2, o.y - size / 2, size, size);
       }
       ctx.save();
       ctx.translate(o.x, o.y);
       ctx.rotate(o.rot);
+      if (o.held) ctx.scale(1 + o.kick * .16, 1 + o.kick * .16);
       ctx.drawImage(sprites[o.kind], -half, -half, spriteSize, spriteSize);
       ctx.restore();
+    }
+
+    if (state.matcha) {
+      const { cup, until } = state.matcha;
+      ctx.strokeStyle = '#d8f08a';
+      ctx.lineWidth = R * .09;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.arc(cup.x, cup.y, R * 1.6, -Math.PI / 2, -Math.PI / 2 + TAU * clamp((until - clock) / MATCHA_TIME, 0, 1));
+      ctx.stroke();
     }
 
     for (const p of particles) {
@@ -1050,13 +1214,15 @@
 
   function bladeUp() {
     if (blade.id === null) return;
+    if (canvas.hasPointerCapture(blade.id)) canvas.releasePointerCapture(blade.id);
     blade.id = null;
     blade.stroke.done = true;
+    if (state.matcha) state.matcha.touched = false;
     closeCombo();
   }
 
   canvas.addEventListener('pointerdown', e => {
-    if (blade.id !== null || e.button !== 0) return;
+    if (blade.id !== null || e.button !== 0 || state.mode === 'over' || state.mode === 'paused') return;
     e.preventDefault();
     sound.wake();
     blade.id = e.pointerId;
@@ -1105,12 +1271,22 @@
     ui.lives.setAttribute('aria-label', `${n} ${n === 1 ? 'life' : 'lives'} left`);
   }
 
+  function clearBoard() {
+    bladeUp();
+    for (const p of pieces) if (p.size === spriteSize) halfPool.push(p.image);
+    objects = []; pieces = []; stains = []; floats = []; cuts = []; strokes = []; segments = [];
+    for (const p of particles) p.life = 0;
+    state.queue = [];
+    state.matcha = null;
+    state.slow = 1;
+    state.shake = state.flash = state.combo.n = 0;
+  }
+
   function startRun() {
     clearTimeout(overTimer);
     sound.wake();
-    Object.assign(state, { mode: 'play', score: 0, lives: MAX_LIVES, time: 0, speed: 1, nextWave: clock + .8, queue: [], grace: 0 });
-    state.combo.n = 0;
-    for (const o of objects) o.free = true;   // whatever is mid-air from the menu can't cost a life
+    clearBoard();
+    Object.assign(state, { mode: 'play', score: 0, lives: MAX_LIVES, time: 0, speed: .85, nextWave: clock + 1, nextTea: clock + 30, grace: 0 });
     ui.score.textContent = '0';
     updateLives();
     showBest();
@@ -1122,8 +1298,13 @@
     closeCombo();
     state.mode = 'over';
     state.queue = [];
-    state.speed = 1;
-    state.nextWave = clock + 1.4;
+    segments.length = 0;
+    bladeUp();   // the blade dies with the run: nothing cuts from here on
+    if (state.matcha) {
+      state.matcha.cup.held = false;
+      state.matcha.cup.vx = state.matcha.cup.vy = 0;
+      state.matcha = null;
+    }
     const record = state.score > state.best;
     if (record) {
       state.best = state.score;
@@ -1147,6 +1328,7 @@
   function pause() {
     if (state.mode !== 'play') return;
     bladeUp();
+    segments.length = 0;
     state.mode = 'paused';
     show(ui.paused);
     $('resume').focus({ preventScroll: true });
@@ -1160,12 +1342,10 @@
 
   function goHome() {
     clearTimeout(overTimer);
+    clearBoard();
     state.mode = 'home';
-    state.queue = [];
-    state.speed = 1;
+    state.speed = .85;
     state.nextWave = clock + .4;
-    for (const o of objects) o.free = true;
-    objects = objects.filter(o => o.kind !== WASABI);
     ui.hud.classList.remove('show');
     showBest();
     show(ui.home);
@@ -1177,6 +1357,15 @@
   $('resume').addEventListener('click', resume);
   $('quit').addEventListener('click', goHome);
   $('toHome').addEventListener('click', goHome);
+
+  // Browsers only allow an orientation lock from fullscreen, and iOS not at all.
+  const lockButton = $('lockLandscape');
+  if (screen.orientation && screen.orientation.lock && document.documentElement.requestFullscreen) lockButton.hidden = false;
+  lockButton.addEventListener('click', () => {
+    document.documentElement.requestFullscreen()
+      .then(() => screen.orientation.lock('landscape'))
+      .catch(() => { lockButton.hidden = true; });
+  });
 
   const muteButton = $('mute');
   muteButton.setAttribute('aria-pressed', sound.muted);
@@ -1220,6 +1409,7 @@
       start_url: base,
       scope: base,
       display: 'fullscreen',
+      orientation: 'landscape',
       background_color: '#1a2440',
       theme_color: '#1a2440',
       categories: ['games'],

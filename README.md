@@ -7,8 +7,11 @@ Works with mouse drag and touch swipe, and installs as an offline PWA.
 ## Rules
 
 - You have 3 lives. A wasabi ball or a dropped piece of sushi costs one.
-- Each cut scores 10 points. Cutting several items in one swipe adds a bonus of 5 × n² (2 items +20, 3 items +45, 4 items +80).
-- Waves get bigger, faster and spicier the longer you survive and the higher you score.
+- Each cut scores 10 points, plus 5 more for every 500 points on your score.
+- A combo is 3 or more cuts in one swipe and adds a bonus of 5 × n² (3 items +45, 4 items +80).
+- Play starts slow with single items. Waves get bigger, faster and spicier the longer you survive and the higher you score.
+- A rare green tea cup starts 3.5 seconds of slow motion. Every sushi item on screen is cut for standard points, wasabi stays dangerous, and each slash on the cup scores double.
+- The game is landscape only. Installed, it locks to landscape; in a browser, portrait shows a prompt to rotate.
 
 ## Run it
 
